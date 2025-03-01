@@ -504,48 +504,48 @@ elif option == "Otimização Linear":
         M = 1000      # Um número grande o suficiente
         epsilon = 0.001  # Valor pequeno para garantir que, quando y_s = 1, RT(s) seja estritamente positivo
 
-        #with st.spinner("Calculando quantidades...", show_time=True):
-        # Criação do modelo de otimização
-        model = pl.LpProblem("Maximizar_Retorno_Combinado", pl.LpMaximize)
+        with st.spinner("Calculando quantidades...", show_time=True):
+            # Criação do modelo de otimização
+            model = pl.LpProblem("Maximizar_Retorno_Combinado", pl.LpMaximize)
 
-        # Variáveis de decisão para as quantidades de cada opção (limite de -10 a 10, por exemplo)
-        quantidades = {}
-        for idx, row in market_df.iterrows():
-            quantidades[idx] = pl.LpVariable(f"x_{idx}", lowBound=-10000, upBound=10000, cat='Integer')
-
-        # Restrição: o valor da entrada (arrecadação) deve ser <= 0
-        model += pl.lpSum([row['valor'] * quantidades[idx] for idx, row in market_df.iterrows()]) <= 0, "Restricao_valor_entrada"
-        
-        # Variáveis binárias para cada valor de strike_regua no intervalo
-        y_vars = {}
-        # Armazenamos também as expressões dos retornos RT(s)
-        expr_dict = {}
-
-        for s in strike_regua_values:
-            y_vars[s] = pl.LpVariable(f"y_{s}", cat='Binary')
-            expr_s = 0
-            # Para cada linha, calcula o "coeficiente" que depende do valor s
+            # Variáveis de decisão para as quantidades de cada opção (limite de -10 a 10, por exemplo)
+            quantidades = {}
             for idx, row in market_df.iterrows():
-                if row['operacao'] == 'CALL':
-                    coeff = max(s - row['strike'], 0) - row['valor']
-                elif row['operacao'] == 'PUT':
-                    coeff = max(row['strike'] - s, 0) - row['valor']
-                expr_s += coeff * quantidades[idx]
-            expr_dict[s] = expr_s
-            # Liga a variável binária y_s com o retorno RT(s)
-            # Se y_s = 0 => RT(s) deve ser <= 0; se y_s = 1 => RT(s) >= epsilon
-            model += expr_s <= M * y_vars[s], f"Link_y_upper_{s}"
-            model += expr_s >= epsilon * y_vars[s], f"Link_y_lower_{s}"
+                quantidades[idx] = pl.LpVariable(f"x_{idx}", lowBound=-10000, upBound=10000, cat='Integer')
 
-        # Parâmetro de ponderação para o retorno total na função objetivo
-        lambda_val = 0.001  # Ajuste esse valor conforme a escala desejada
+            # Restrição: o valor da entrada (arrecadação) deve ser <= 0
+            model += pl.lpSum([row['valor'] * quantidades[idx] for idx, row in market_df.iterrows()]) <= 0, "Restricao_valor_entrada"
+            
+            # Variáveis binárias para cada valor de strike_regua no intervalo
+            y_vars = {}
+            # Armazenamos também as expressões dos retornos RT(s)
+            expr_dict = {}
 
-        # Objetivo: maximizar a soma do número de cenários positivos e a soma ponderada dos retornos
-        objective_expr = pl.lpSum([ y_vars[s] + lambda_val * expr_dict[s] for s in strike_regua_values ])
-        model += objective_expr, "Objetivo_Combinado"
+            for s in strike_regua_values:
+                y_vars[s] = pl.LpVariable(f"y_{s}", cat='Binary')
+                expr_s = 0
+                # Para cada linha, calcula o "coeficiente" que depende do valor s
+                for idx, row in market_df.iterrows():
+                    if row['operacao'] == 'CALL':
+                        coeff = max(s - row['strike'], 0) - row['valor']
+                    elif row['operacao'] == 'PUT':
+                        coeff = max(row['strike'] - s, 0) - row['valor']
+                    expr_s += coeff * quantidades[idx]
+                expr_dict[s] = expr_s
+                # Liga a variável binária y_s com o retorno RT(s)
+                # Se y_s = 0 => RT(s) deve ser <= 0; se y_s = 1 => RT(s) >= epsilon
+                model += expr_s <= M * y_vars[s], f"Link_y_upper_{s}"
+                model += expr_s >= epsilon * y_vars[s], f"Link_y_lower_{s}"
 
-        # Resolve o modelo
-        status = model.solve()
+            # Parâmetro de ponderação para o retorno total na função objetivo
+            lambda_val = 0.001  # Ajuste esse valor conforme a escala desejada
+
+            # Objetivo: maximizar a soma do número de cenários positivos e a soma ponderada dos retornos
+            objective_expr = pl.lpSum([ y_vars[s] + lambda_val * expr_dict[s] for s in strike_regua_values ])
+            model += objective_expr, "Objetivo_Combinado"
+
+            # Resolve o modelo
+            status = model.solve()
 
         # Atualiza as quantidades no DataFrame com os valores otimizados
         for idx, var in quantidades.items():
