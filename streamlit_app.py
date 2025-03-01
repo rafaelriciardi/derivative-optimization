@@ -77,6 +77,11 @@ if option == "Otimização Personalizada":
         call_df['operacao'] = "CALL"
         put_df['operacao'] = "PUT"
 
+        call_df['strike'] = call_df['strike'].apply(lambda x: x.replace(',', '.'))
+        call_df['valor'] = call_df['valor'].apply(lambda x: x.replace(',', '.'))
+        put_df['strike'] = put_df['strike'].apply(lambda x: x.replace(',', '.'))
+        put_df['valor'] = put_df['valor'].apply(lambda x: x.replace(',', '.'))
+
         call_df['strike'] = call_df['strike'].astype(float)
         call_df['valor'] = call_df['valor'].astype(float)
         put_df['strike'] = put_df['strike'].astype(float)
