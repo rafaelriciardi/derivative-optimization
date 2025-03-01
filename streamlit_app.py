@@ -102,9 +102,9 @@ if option == "Otimização Personalizada":
 
         market_df = pd.concat([call_df, put_df])
 
-        strike_central = abs(float(center_input)) 
-        strike_min = abs(float(left_input))
-        strike_max = abs(float(right_input))  
+        strike_central = abs(float(center_input.replace(',', '.'))) 
+        strike_min = abs(float(left_input.replace(',', '.')))
+        strike_max = abs(float(right_input.replace(',', '.')))  
         num_points = 50
 
         def objective(quantities): 
@@ -302,9 +302,9 @@ elif option == "Otimização Gaussiana":
 
         market_df = pd.concat([call_df, put_df])
 
-        strike_central = abs(float(center_input)) 
-        strike_min = abs(float(left_input))
-        strike_max = abs(float(right_input))  
+        strike_central = abs(float(center_input.replace(',', '.'))) 
+        strike_min = abs(float(left_input.replace(',', '.')))
+        strike_max = abs(float(right_input.replace(',', '.')))  
         num_points = 50
 
         def objective(quantities): 
@@ -496,11 +496,11 @@ elif option == "Otimização Linear":
 
         market_df = pd.concat([call_df, put_df]).reset_index(drop=True)
 
-        strike_min = abs(int(left_input))
-        strike_max = abs(int(right_input))  
+        strike_min = abs(float(left_input.replace(',', '.')))
+        strike_max = abs(float(right_input.replace(',', '.')))  
 
         # Definindo o intervalo de strike_regua (exemplo: de 20 a 50)
-        strike_regua_values = list(range(strike_min, strike_max))
+        strike_regua_values = list(np.arange(strike_min, strike_max+0.01, 0.01))
 
         # Parâmetros para a técnica big-M e epsilon
         M = 1000      # Um número grande o suficiente
