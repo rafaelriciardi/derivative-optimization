@@ -51,12 +51,12 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.header("Call")
-    template_call_df = pd.DataFrame(columns=columns_config)
+    template_call_df = pd.DataFrame([[None, None, None]], columns=columns_config)
     edit_call_df = st.data_editor(template_call_df, num_rows="dynamic", key = 1)
 
 with col2:
     st.header("Put")
-    template_put_df = pd.DataFrame(columns=columns_config)
+    template_put_df = pd.DataFrame([[None, None, None]], columns=columns_config)
     edit_put_df = st.data_editor(template_put_df, num_rows="dynamic", key = 2)
 
 
