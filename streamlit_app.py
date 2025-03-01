@@ -262,8 +262,6 @@ if option == "Otimização Personalizada":
             st.header("Put")
             st.dataframe(put_df)
 
-        st.write(put_df['quantidade'].dtypes)
-
 
 #####################################################################
 
