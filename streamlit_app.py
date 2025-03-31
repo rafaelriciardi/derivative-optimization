@@ -62,7 +62,7 @@ with col2:
 
 option = st.selectbox(
     "Qual código você deseja executar?",
-    ("Otimização Personalizada", "Otimização Gaussiana", "Otimização Linear"),
+    ("Otimização Personalizada", "Otimização Gaussiana", "Otimização Linear", "Intervalo Positivo"),
 )
 
 #####################################################################
@@ -638,3 +638,214 @@ elif option == "Otimização Linear":
             st.dataframe(put_df)
 
 
+#####################################################################
+
+if option == "Intervalo Positivo":
+
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        left_input = st.text_input("Strike", "120")
+
+    with col2:
+        center_input = st.radio(
+            "Qual operação deseja calcular?",
+            ["Abaixo (<)", "Acima (>)"],
+        )
+
+    with col3:
+        if center_input == "Abaixo (<)":
+            right_input = st.text_input("Limite", "0")
+        elif center_input == "Acima (>)":
+            right_input = st.text_input("Limite", "200")
+    
+    col1, col2, col3 , col4, col5, col6, col7 = st.columns(7)
+    if col4.button("Calcular", type="primary"):
+
+        call_df = edit_call_df.copy()
+        put_df = edit_put_df.copy()
+
+        call_df['operacao'] = "CALL"
+        put_df['operacao'] = "PUT"
+
+        
+        call_df['strike'] = call_df['strike'].apply(lambda x: x.replace(',', '.'))
+        call_df['valor'] = call_df['valor'].apply(lambda x: x.replace(',', '.'))
+        put_df['strike'] = put_df['strike'].apply(lambda x: x.replace(',', '.'))
+        put_df['valor'] = put_df['valor'].apply(lambda x: x.replace(',', '.'))
+
+        call_df['strike'] = call_df['strike'].astype(float)
+        call_df['valor'] = call_df['valor'].astype(float)
+        put_df['strike'] = put_df['strike'].astype(float)
+        put_df['valor'] = put_df['valor'].astype(float)
+
+        market_df = pd.concat([call_df, put_df])
+        
+        strike = abs(float(left_input.replace(',', '.')))
+        limite = abs(float(right_input.replace(',', '.')))  
+        num_points = 50
+
+        def objective(quantities): 
+            alpha=1.0            # Peso para o retorno no strike central, 
+            beta=1.0             # Peso para o retorno ponderado, 
+            penalty_multiplier=1000      # Multiplicador para penalizar se o retorno central não for máximo
+            penalty_entry_multiplier=1000  # Multiplicador para penalizar se a arrecadação for > 0):
+            
+            # Arredonda as quantidades para inteiros
+            quantities = np.round(quantities).astype(int)
+            
+            # Atualiza o DataFrame com as quantidades
+            df = market_df.copy()
+            df['quantidade'] = quantities
+            
+            # Separa os ativos em CALL e PUT
+            call_df = df[df['operacao'] == 'CALL']
+            put_df  = df[df['operacao'] == 'PUT']
+            
+            # Calcula o valor de entrada (arrecadação)
+            valor_entrada_op = calculate_entry(call_df, put_df)
+            
+            # Penalização para arrecadação > 0
+            penalty_entry = 0
+            if valor_entrada_op > 0:
+               penalty_entry = penalty_entry_multiplier * valor_entrada_op
+            
+            # Listas de strikes e quantidades
+            call_strikes = call_df['strike'].tolist()
+            call_qtd     = call_df['quantidade'].tolist()
+            put_strikes  = put_df['strike'].tolist()
+            put_qtd      = put_df['quantidade'].tolist()
+            
+            # Cria os valores de strike para avaliação
+            if center_input == "Abaixo (<)":
+                strike_values = np.linspace(limite, strike, num_points)
+            elif center_input == "Acima (>)":
+                strike_values = np.linspace(strike, limite, num_points)
+            
+            
+            # Calcula os pesos com a normal centrada no strike central
+            weights = [1000] * len(strike_values)
+            
+            # Calcula os retornos para cada strike do intervalo
+            rt_values = np.array([
+                calculate_rt(s, valor_entrada_op, call_strikes, call_qtd, put_strikes, put_qtd)
+                for s in strike_values
+            ])
+
+            # Penalização para retornos negativos
+            penalty_rt = 0
+            if valor_entrada_op > 0:
+               neg_rt = sum([x for x in rt_values if x < 0])
+               penalty_rt = penalty_multiplier * neg_rt
+            
+            # Retorno ponderado (integral do produto retorno x peso)
+            #weighted_return = np.trapz(rt_values * weightss, strike_values)
+            #weighted_return = (rt_values * weights).sum()
+            weighted_return = rt_values.sum()
+            #weighted_return = (rt_values ** strike_values).sum()
+            #weighted_return = sum([1 if rt > 0 else -1 for rt in rt_values])
+            
+            # Combina as métricas e subtrai as penalizações
+            score = beta * weighted_return - penalty_entry + penalty_rt
+            
+            # Como differential_evolution minimiza, retornamos o negativo do score
+            return -score
+
+        # Limites para cada quantidade (entre -10000 e 10000)
+        bounds = [(-150000, 150000)] * len(market_df)
+        
+        with st.spinner("Calculando quantidades...", show_time=True):
+            # Otimização usando Differential Evolution
+            result = differential_evolution(objective, bounds, strategy='best1bin', maxiter=1000,
+                                            popsize=15, tol=0.01, workers=1)
+
+        # Converte as melhores quantidades para inteiros
+        best_quantities = np.round(result.x/10).astype(int)
+
+        market_df['quantidade'] = best_quantities
+
+        call_df = market_df[market_df['operacao'] == 'CALL'].copy()
+        put_df = market_df[market_df['operacao'] == 'PUT'].copy()
+
+        call_df.drop(columns=['operacao'], inplace=True)
+        put_df.drop(columns=['operacao'], inplace=True)
+
+        #Teste inicial das combinacoes com intervalo refinado no range
+        if center_input == "Abaixo (<)":
+            min_cenario = limite
+            max_cenario = strike
+        elif center_input == "Acima (>)":
+            min_cenario = strike
+            max_cenario = limite
+        
+        granularidade = 0.01
+        p_cenarios = np.arange(min_cenario, max_cenario+granularidade, granularidade)
+
+        p_results = [calculate_rt(p, calculate_entry(call_df, put_df), 
+                                call_df.strike.values, call_df.quantidade.values, 
+                                put_df.strike.values, put_df.quantidade.values) 
+                                for p in p_cenarios]
+
+        arr_results = np.array(p_results)
+        cobertura_absoluta = len(arr_results[arr_results > 0])
+        cobertura_percentual = cobertura_absoluta/len(arr_results)
+
+        # Example data
+        x = np.array(p_cenarios)
+        y = np.array(p_results)
+
+        # Create a scatter plot
+        fig = go.Figure()
+
+        # Add positive values in green with smaller points
+        fig.add_trace(go.Scatter(x=x[y >= 0], y=y[y >= 0], mode='markers', marker=dict(color='green', size=3), name='Positive'))
+
+        # Add negative values in red with smaller points
+        fig.add_trace(go.Scatter(x=x[y < 0], y=y[y < 0], mode='markers', marker=dict(color='red', size=3), name='Negative'))
+
+        # Add a black straight line through y = 0
+        fig.add_trace(go.Scatter(x=[min(x), max(x)], y=[0, 0], mode='lines', line=dict(color='black', width=2), name='y=0'))
+
+        # Add labels and title
+        fig.update_layout(
+            title='Retornos nos strikes para as quantidades calculadas',
+            xaxis_title='Valor Strike',
+            yaxis_title='RT'
+        )
+
+        # Show the plot
+        st.plotly_chart(fig)
+
+        arrecadacao = str(calculate_entry(call_df, put_df))
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            pass
+        with col2:
+            st.text("Arredadação = " + arrecadacao)
+        with col3:
+            pass    
+
+        call_df['strike'] = call_df['strike'].astype(str)
+        call_df['valor'] = call_df['valor'].astype(str)
+        call_df['quantidade'] = call_df['quantidade'].astype(str)
+        put_df['strike'] = put_df['strike'].astype(str)
+        put_df['valor'] = put_df['valor'].astype(str)
+        put_df['quantidade'] = put_df['quantidade'].astype(str)
+
+        call_df['strike'] = call_df['strike'].apply(lambda x: x.replace('.', ','))
+        call_df['valor'] = call_df['valor'].apply(lambda x: x.replace('.', ','))
+        call_df['quantidade'] = call_df['quantidade'].apply(lambda x: x.replace(',', ''))
+        put_df['strike'] = put_df['strike'].apply(lambda x: x.replace('.', ','))
+        put_df['valor'] = put_df['valor'].apply(lambda x: x.replace('.', ','))
+        put_df['quantidade'] = put_df['quantidade'].apply(lambda x: x.replace(',', ''))
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.header("Call")
+            st.dataframe(call_df)
+            
+
+        with col2:
+            st.header("Put")
+            st.dataframe(put_df)
