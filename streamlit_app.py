@@ -688,7 +688,7 @@ if option == "Intervalo Positivo":
         def objective(quantities): 
             alpha=1.0            # Peso para o retorno no strike central, 
             beta=1.0             # Peso para o retorno ponderado, 
-            penalty_multiplier=1000      # Multiplicador para penalizar se o retorno central não for máximo
+            penalty_multiplier=1000000      # Multiplicador para penalizar se o retorno central não for máximo
             penalty_entry_multiplier=1000  # Multiplicador para penalizar se a arrecadação for > 0):
             
             # Arredonda as quantidades para inteiros
@@ -724,7 +724,7 @@ if option == "Intervalo Positivo":
             
             
             # Calcula os pesos com a normal centrada no strike central
-            weights = [1000] * len(strike_values)
+            #weights = [1000] * len(strike_values)
             
             # Calcula os retornos para cada strike do intervalo
             rt_values = np.array([
@@ -732,21 +732,24 @@ if option == "Intervalo Positivo":
                 for s in strike_values
             ])
 
+            rt_values = np.where(rt_values < 0, -1e9, rt_values)
+            #rt_values = np.array([x if x > 0 else -rt_values.max() for x in rt_values])
+
             # Penalização para retornos negativos
-            penalty_rt = 0
-            if valor_entrada_op > 0:
-               neg_rt = sum([x for x in rt_values if x < 0])
-               penalty_rt = penalty_multiplier * neg_rt
+            # penalty_rt = 0
+            # if (rt_values < 0).any():
+            #    neg_rt = sum([x for x in rt_values if x < 0])
+            #    penalty_rt = penalty_multiplier * neg_rt
             
             # Retorno ponderado (integral do produto retorno x peso)
-            #weighted_return = np.trapz(rt_values * weightss, strike_values)
+            #weighted_return = np.trapz(rt_values, strike_values)
             #weighted_return = (rt_values * weights).sum()
             weighted_return = rt_values.sum()
             #weighted_return = (rt_values ** strike_values).sum()
-            #weighted_return = sum([1 if rt > 0 else -1 for rt in rt_values])
+            #weighted_return = sum([1 if rt > 0 else -100 for rt in rt_values])
             
             # Combina as métricas e subtrai as penalizações
-            score = beta * weighted_return - penalty_entry + penalty_rt
+            score = beta * weighted_return - penalty_entry# + penalty_rt
             
             # Como differential_evolution minimiza, retornamos o negativo do score
             return -score
