@@ -5,7 +5,7 @@ import pulp as pl
 import numpy as np
 from tqdm import tqdm
 import plotly.graph_objects as go
-from scipy.optimize import differential_evolution
+from scipy.optimize import differential_evolution, NonlinearConstraint
 from scipy.stats import norm
 
 import warnings
@@ -62,7 +62,7 @@ with col2:
 
 option = st.selectbox(
     "Qual código você deseja executar?",
-    ("Otimização Personalizada", "Otimização Gaussiana", "Otimização Linear", "Intervalo Positivo"),
+    ("Otimização Personalizada", "Otimização Gaussiana", "Otimização Linear", "Intervalo Positivo", "Otimização Retorno Positivo"),
 )
 
 #####################################################################
@@ -852,3 +852,188 @@ if option == "Intervalo Positivo":
         with col2:
             st.header("Put")
             st.dataframe(put_df)
+
+#####################################################################
+
+if option == "Otimização Retorno Positivo":
+    
+    # Inputs para definir o intervalo de strikes
+    col1, col2 = st.columns(2)
+    with col1:
+        strike_inicial_input = st.text_input("Strike Inicial", "120")
+    with col2:
+        strike_maximo_input = st.text_input("Strike Máximo", "200")
+    
+    if st.button("Calcular", type="primary"):
+        
+        # Cópia dos DataFrames originais e marcação das operações
+        call_df = edit_call_df.copy()
+        put_df = edit_put_df.copy()
+        call_df['operacao'] = "CALL"
+        put_df['operacao'] = "PUT"
+        
+        # Converte os valores de 'strike' e 'valor' de string para float (substituindo vírgula por ponto)
+        for df in [call_df, put_df]:
+            df['strike'] = df['strike'].apply(lambda x: x.replace(',', '.')).astype(float)
+            df['valor']  = df['valor'].apply(lambda x: x.replace(',', '.')).astype(float)
+        
+        # Concatena os DataFrames de CALL e PUT
+        market_df = pd.concat([call_df, put_df])
+        
+        # Conversão dos inputs para float
+        strike_inicial = abs(float(strike_inicial_input.replace(',', '.')))
+        strike_maximo  = abs(float(strike_maximo_input.replace(',', '.')))
+        num_points = 200  # Número de pontos para avaliar os retornos no intervalo
+        
+        # =====================================================================
+        # Definição das restrições para garantir:
+        #   1. Retorno mínimo no intervalo >= ε (i.e., todos os retornos positivos)
+        #   2. Arrecadação (valor de entrada) <= 0 (ou seja, negativa ou zero)
+        # =====================================================================
+        
+        # Restrição 1: Retorno mínimo no intervalo
+        def constraint_rt(quantities):
+            quantities = np.round(quantities).astype(int)
+            df = market_df.copy()
+            df['quantidade'] = quantities
+            # Separa as operações
+            call_df_c = df[df['operacao'] == 'CALL']
+            put_df_c  = df[df['operacao'] == 'PUT']
+            valor_entrada_op = calculate_entry(call_df_c, put_df_c)
+            
+            # Extrai listas de strikes e quantidades
+            call_strikes = call_df_c['strike'].tolist()
+            call_qtd     = call_df_c['quantidade'].tolist()
+            put_strikes  = put_df_c['strike'].tolist()
+            put_qtd      = put_df_c['quantidade'].tolist()
+            
+            # Avalia os retornos para uma grade de strikes
+            strike_values = np.linspace(strike_inicial, strike_maximo, num_points)
+            rt_values = np.array([
+                calculate_rt(s, valor_entrada_op, call_strikes, call_qtd, put_strikes, put_qtd)
+                for s in strike_values
+            ])
+            # Retorna o menor retorno encontrado
+            return np.min(rt_values)
+        
+        epsilon = 1e-6  # Margem mínima para considerar o retorno como "positivo"
+        nonlinear_constraint_rt = NonlinearConstraint(constraint_rt, epsilon, np.inf)
+        
+        # Restrição 2: Arrecadação negativa (valor_entrada <= 0)
+        def constraint_entry(quantities):
+            quantities = np.round(quantities).astype(int)
+            df = market_df.copy()
+            df['quantidade'] = quantities
+            call_df_c = df[df['operacao'] == 'CALL']
+            put_df_c  = df[df['operacao'] == 'PUT']
+            valor_entrada_op = calculate_entry(call_df_c, put_df_c)
+            # Retornando -valor_entrada para impor: -valor_entrada >= 0  ⟺ valor_entrada <= 0
+            return -valor_entrada_op
+        
+        nonlinear_constraint_entry = NonlinearConstraint(constraint_entry, 0, np.inf)
+        
+        # =====================================================================
+        # Otimização via Differential Evolution com restrições
+        # =====================================================================
+        # Definindo limites para as quantidades (ajuste conforme necessário)
+        bounds = [(-100000, 100000)] * len(market_df)
+        
+        # Função objetivo constante (buscamos uma solução viável)
+        def objective(quantities):
+            return 0
+        
+        with st.spinner("Calculando quantidades...", show_time=True):
+            result = differential_evolution(
+                objective,
+                bounds,
+                constraints=(nonlinear_constraint_rt, nonlinear_constraint_entry),
+                strategy='best1bin',
+                maxiter=1000,
+                popsize=15,
+                tol=0.01,
+                workers=1
+            )
+        
+        # Converte as quantidades otimizadas para inteiros
+        best_quantities = np.round(result.x).astype(int)
+        market_df['quantidade'] = best_quantities
+        
+        # Separa os DataFrames para CALL e PUT para exibição
+        call_df_result = market_df[market_df['operacao'] == 'CALL'].copy()
+        put_df_result  = market_df[market_df['operacao'] == 'PUT'].copy()
+        call_df_result.drop(columns=['operacao'], inplace=True)
+        put_df_result.drop(columns=['operacao'], inplace=True)
+        
+        # =====================================================================
+        # Teste e Visualização dos Retornos no Intervalo
+        # =====================================================================
+        granularidade = 0.01
+        p_cenarios = np.arange(strike_inicial, strike_maximo + granularidade, granularidade)
+        p_results = [
+            calculate_rt(
+                p,
+                calculate_entry(call_df_result, put_df_result),
+                call_df_result.strike.values,
+                call_df_result.quantidade.values,
+                put_df_result.strike.values,
+                put_df_result.quantidade.values
+            )
+            for p in p_cenarios
+        ]
+        arr_results = np.array(p_results)
+        cobertura_absoluta = len(arr_results[arr_results > 0])
+        cobertura_percentual = cobertura_absoluta / len(arr_results)
+        
+        # Cria o gráfico dos retornos
+        x = np.array(p_cenarios)
+        y = np.array(p_results)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=x[y >= 0],
+            y=y[y >= 0],
+            mode='markers',
+            marker=dict(color='green', size=3),
+            name='Retorno Positivo'
+        ))
+        fig.add_trace(go.Scatter(
+            x=x[y < 0],
+            y=y[y < 0],
+            mode='markers',
+            marker=dict(color='red', size=3),
+            name='Retorno Negativo'
+        ))
+        fig.add_trace(go.Scatter(
+            x=[min(x), max(x)],
+            y=[0, 0],
+            mode='lines',
+            line=dict(color='black', width=2),
+            name='y=0'
+        ))
+        fig.update_layout(
+            title='Retornos no Intervalo',
+            xaxis_title='Strike',
+            yaxis_title='RT'
+        )
+        st.plotly_chart(fig)
+        
+        # Exibe o valor da arrecadação
+        arrecadacao = str(calculate_entry(call_df_result, put_df_result))
+        st.text("Arrecadação = " + arrecadacao)
+        
+        # =====================================================================
+        # Formatação para Exibição dos DataFrames
+        # =====================================================================
+        call_df_result['strike'] = call_df_result['strike'].astype(str).apply(lambda x: x.replace('.', ','))
+        call_df_result['valor'] = call_df_result['valor'].astype(str).apply(lambda x: x.replace('.', ','))
+        call_df_result['quantidade'] = call_df_result['quantidade'].astype(str)
+        put_df_result['strike'] = put_df_result['strike'].astype(str).apply(lambda x: x.replace('.', ','))
+        put_df_result['valor'] = put_df_result['valor'].astype(str).apply(lambda x: x.replace('.', ','))
+        put_df_result['quantidade'] = put_df_result['quantidade'].astype(str)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.header("Call")
+            st.dataframe(call_df_result)
+        with col2:
+            st.header("Put")
+            st.dataframe(put_df_result)
