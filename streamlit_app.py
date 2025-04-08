@@ -954,6 +954,9 @@ if option == "Otimização Retorno Positivo":
                 workers=1
             )
         
+        st.text("Flag sucesso: "+str(result.success))
+        st.text(result.message)
+
         # Converte as quantidades otimizadas para inteiros
         best_quantities = np.round(result.x).astype(int)
         market_df['quantidade'] = best_quantities
