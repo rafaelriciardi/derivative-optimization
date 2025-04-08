@@ -62,7 +62,7 @@ with col2:
 
 option = st.selectbox(
     "Qual código você deseja executar?",
-    ("Otimização Personalizada", "Otimização Gaussiana", "Otimização Linear", "Intervalo Positivo", "Otimização Retorno Positivo"),
+    ("Otimização Personalizada", "Otimização Retorno Positivo"),
 )
 
 #####################################################################
